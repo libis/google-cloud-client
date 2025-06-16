@@ -1,0 +1,6 @@
+/config/*
+!/config/*example*
+.env*
+!.env_*example*
+/src/test/*
+*.txt

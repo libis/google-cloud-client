@@ -1,0 +1,20 @@
+services:
+
+  google_cloud_client:
+    image: google_cloud_client
+    build: 
+      context: ./
+      dockerfile: Dockerfile
+    networks: 
+      - data_network
+    env_file:
+      - .env_google_cloud
+    volumes:
+      - ./bin:/app/bin
+      - ./config:/app/config
+      - ./src:/app/src
+      - ../records:/records
+      
+networks:
+  data_network:
+    driver: bridge
