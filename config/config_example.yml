@@ -1,0 +1,19 @@
+---
+:record_pattern: ".*.mp4"
+:recordid_from_file_name: 
+  :search: '(record_[\d]*)_[\d]*.mp4'
+  :replace: 'RECORD_\1'
+:get_record:
+  :process: elasticsearch_get_record
+  :params:
+    :es_host: "https://host.docker.internal:9200"
+    :es_index: "my_index"
+:input_dirs:
+  - '/records/input'
+:output_dir: '/records/output'
+:es_host: "http://elasticsearch:9200"
+:es_index: "icamy_indexndid_test"
+:log_file: "/app/logs/example_logging.log"
+:gconfig_file: "/app/config/video_intelligence.json"
+:gconfig_application_credentials_file: "/app/config/application_default_credentials.json"
+  

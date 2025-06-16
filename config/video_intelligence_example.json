@@ -1,0 +1,16 @@
+{
+  "features": ["TEXT_DETECTION","SPEECH_TRANSCRIPTION", "LABEL_DETECTION"],
+  "video_context": {
+    "text_detection_config": {
+      "language_hints": ["en-US"]
+    },
+    "speech_transcription_config": {
+      "language_code": "en-US",
+      "enable_automatic_punctuation": true,
+      "filter_profanity": false
+    },
+    "label_detection_config": {
+      "label_detection_mode": "SHOT_MODE"
+    }
+  }
+}
