@@ -1,18 +1,19 @@
 #encoding: UTF-8
-require "google/cloud/video_intelligence/v1"
+require 'exiftool_vendored'
+require "google/cloud/speech/v1" # https://cloud.google.com/ruby/docs/reference/google-cloud-speech-v1/latest
 require 'data_collector'
 require_relative './helper'
+require_relative './storage'
 
 module GCloud
-  module VideoIntelligence
+  module SpeechToText
    class Client
       include DataCollector::Core
       include GCloud
 
       attr_accessor :client, :logger, :gconfig, :client_config
 
-      GCLOUD_SERIVCE_CONFIG_FILE="video_intelligence.json"
-
+      GCLOUD_SERIVCE_CONFIG_FILE="speech_to_text.json"
       def initialize
         @logger = Logger.new(STDOUT)
         @logger.level = Logger::DEBUG
@@ -34,31 +35,50 @@ module GCloud
           raise "Please set the gconfig_path of the service config. example: /app/config/"
         end
 
-        @client = Google::Cloud::VideoIntelligence::V1::VideoIntelligenceService::Client.new
+        @client = Google::Cloud::Speech::V1::Speech::Client.new
         @gconfig = JSON.parse(  File.read(@client_config[:gconfig_file]) , symbolize_names: true)
+
+        @gStorageClient = GCloud::Storage::Client.new
+        @gStorageClient.logger = Logger.new(STDOUT)
+
+        @gStorageClient.logger.info "Starting Google Storage Client"
+        @gStorageClient.client_config.keys
+        input_files =  @gStorageClient.read_buckets
+
       end
 
       def response
-        @logger.debug "Starting video annotation process with Google Video Intelligence API"
-        @logger.debug "Client configuration: features #{@gconfig[:features]}"
-        @logger.debug "Client configuration: video_context #{@gconfig[:video_context]}"
-        
-        # TODO
-        # implement Google cloud Storage
+        pp @gconfig
+        if @gconfig[:audio][:uri].nil? && @gconfig[:audio][:content].nil?
+          raise "No audio provided to process"
+        end
 
-        operation = @client.annotate_video(::Google::Cloud::VideoIntelligence::V1::AnnotateVideoRequest.new ( @gconfig ) )
-        
-        operation.wait_until_done!
+        unless @gconfig[:audio][:uri].nil?
+          google_cloud_file =  File.join( "audio_files", File.basename(@gconfig[:audio][:uri])  )
+          
+          @gStorageClient.upload_to_google_storage(@gconfig[:audio][:uri], google_cloud_file)
+          @gconfig[:audio] = { "uri": "gs://#{ @client_config[:gconfig_storage_bucket] }/#{google_cloud_file}" }
+          
+          operation = @client.long_running_recognize @gconfig
+          puts "Operation started"
 
-        operation.results
+          operation.wait_until_done!
+          
+          raise operation.results.message if operation.error?
+          
+          pp "Operation finished with transcription model: #{@gconfig[:config][:model]}"
 
+          # TEST DEDUG
+          #transcription_file_path = "/records/output/test_speech_to_text.json"
+          #File.open(transcription_file_path, 'r') do |f|
+          #  return JSON.parse(  f.read )
+          #end
 
-        raise operation.results.message if operation.error?
+          @gStorageClient.remove_from_google_storage(google_cloud_file)
 
-        return JSON.parse( operation.response.to_json , symbolize_names: true)
-
-
-
+          return JSON.parse( operation.response.to_json , symbolize_names: true)
+          
+        end
       end
 
       def select_files

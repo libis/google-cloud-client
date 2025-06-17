@@ -1,0 +1,13 @@
+{
+  "config": {
+    "encoding": "LINEAR16",
+    "language_code": "en-US",
+    "alternative_language_codes": [
+      "en-US"
+    ],
+    "model": "default"
+  },
+  "audio": {
+    "content": "INPUT_AUDIO"
+  }
+}

@@ -1,19 +1,21 @@
 #encoding: UTF-8
 $LOAD_PATH << '.' << './lib'
 require 'logger'
-require_relative './lib/video_intelligence'
+require_relative './lib/speech_to_text'
 
 begin
 
-  google_ai_service = "Video Intelligence"
+  google_ai_service = "Speech To Text"
+
+#  language_code = "en-US"
+#  TRANSCRIPTION_MODEL = "default" # "latest_long" or "latest_short"
 
   start_parsing = DateTime.now.to_time
   
-  gClient = GCloud::VideoIntelligence::Client.new
+  gClient = GCloud::SpeechToText::Client.new
   gClient.logger = Logger.new(STDOUT)
 
   gClient.logger.info "Starting Google #{google_ai_service} Client"
-  # gClient.client_config.keys
   input_files =  gClient.select_files
   gClient.logger.info "Selected input files: #{input_files}"
   gClient.logger.info "Input files count: #{input_files.count}"
@@ -30,33 +32,45 @@ begin
       initial_config = gClient.gconfig.clone
     end
 
-    output_path = File.join( gClient.client_config[:output_dir], File.basename(input_file) )
+    audio_file = input_file
 
-    if File.file?(output_path) 
-      gClient.logger.info "#{output_path} exists. Skipping video intelligence request for file: #{input_file}"
-      next
+    if File.extname(audio_file) == ".mp4"
+      audio_file = "#{File.dirname(audio_file)}/#{File.basename(audio_file,'.*')}.flac"
+      begin
+        gClient.rip_audio_from_video(input_file, audio_file)
+      rescue
+        pp "MAY DAY MAY DAY"
+        gClient.logger.warn "Unable to extract audio from #{input_file}"
+        exit
+        next
+      end
+    end
+    
+    gClient.gconfig[:audio][:uri] = audio_file
+
+    audio_file_metadata = Exiftool.new(audio_file)
+
+    unless audio_file_metadata.to_hash[:sample_rate].nil?
+       gClient.gconfig[:config][:sample_rate_hertz] = audio_file_metadata.to_hash[:sample_rate]
+    end
+
+    if File.extname(audio_file) == ".flac"
+       gClient.gconfig[:config][:encoding] = "FLAC"
     end
 
     metadata = gClient.get_metadata_from_record(input_file)
 
     unless metadata[:language_code].nil?
-      unless gClient.gconfig[:video_context][:text_detection_config].nil?
-        gClient.gconfig[:video_context][:text_detection_config][:language_hints] = [ gClient.gconfig[:video_context][:text_detection_config][:language_hints] , metadata[:language_code] ].flatten.compact
-      end
-      unless gClient.gconfig[:video_context][:speech_transcription_config].nil?
-        gClient.gconfig[:video_context][:speech_transcription_config][:language_code] = metadata[:language_code]
-      end
+      gClient.gconfig[:config][:language_code] = metadata[:language_code]
+      gClient.gconfig[:config][:alternative_language_codes] = [ gClient.gconfig[:config][:alternative_language_codes] , metadata[:language_code] ].flatten.compact
     end
 
-    output_file = File.join( gClient.client_config[:output_dir], "#{ File.basename(input_file , File.extname(input_file) ) }_video_intelligence_#{ metadata[:language_code].gsub('-','_')}.json") 
+    output_file = File.join( gClient.client_config[:output_dir], "#{ File.basename(input_file , File.extname(input_file) ) }_speech_to_text_#{ metadata[:language_code].gsub('-','_')}.json") 
 
     if File.file?(output_file) 
       gClient.logger.info "#{output_file} exists. Skipping #{google_ai_service} request for input_file: #{input_file}"
-      next      
+      next
     end
-
-    ## This will nt use the storage option 
-    gClient.gconfig[:input_content] = File.open(input_file, 'rb') { |io| io.read }
 
     response = gClient.response
 

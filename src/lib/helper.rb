@@ -22,164 +22,225 @@ DEFAULT_REGIONS = {
 }
 
 module GCloud
-  module VideoIntelligence
-    def select_files_from_dir(input_dir)
-      source_files = []
-      if File.directory?(input_dir)
-        Dir.glob("#{input_dir}/*").each do |file|
-          if File.file?(file)
-            unless @client_config[:record_pattern].nil?
-              if file.match?(@client_config[:record_pattern])
-                @logger.debug "Adding file: #{file}"
-              else
-                @logger.debug "Skipping file: #{file} (does not match pattern)"
-                next
-              end
-            else
+
+  def select_files_from_dir(input_dir)
+    source_files = []
+    if File.directory?(input_dir)
+      Dir.glob("#{input_dir}/*").each do |file|
+        if File.file?(file)
+          unless @client_config[:record_pattern].nil?
+            if file.match?(@client_config[:record_pattern])
               @logger.debug "Adding file: #{file}"
+            else
+              @logger.debug "Skipping file: #{file} (does not match pattern)"
+              next
             end
-            source_files << file
+          else
+            @logger.debug "Adding file: #{file}"
           end
-          if File.directory?(file)
-            source_files << select_files_from_dir(file)
-            source_files.flatten!
-          end
+          source_files << file
         end
-      else
-        raise "Input directory does not exist: #{input_dir}"
+        if File.directory?(file)
+          source_files << select_files_from_dir(file)
+          source_files.flatten!
+        end
       end
+    else
+      raise "Input directory does not exist: #{input_dir}"
+    end
+    
+    source_files
+
+  end
+
+  def elasticsearch_get_record(recordid)
+    # This method should be implemented to retrieve a record from Elasticsearch
+    # For now, it returns nil to simulate a record not found
+    # nil
+    begin
+
+      @es_url = URI.parse( ENV['ES_URL'] || @client_config[:get_record][:params][:es_host] )
+      @logger.debug "Elasticsearch Host: #{ @es_url.host}"
       
-      source_files
+      @es_url.user = ENV['ES_USER'] if ENV['ES_USER'] && ENV['ES_PASSWORD']
+      @es_url.password = ENV['ES_PASSWORD'] if ENV['ES_USER'] && ENV['ES_PASSWORD']
 
-    end
+      @es_client = Elasticsearch::Client.new url:  @es_url, transport_options: {  ssl:  { verify: false } }
 
-    def elasticsearch_get_record(recordid)
-      # This method should be implemented to retrieve a record from Elasticsearch
-      # For now, it returns nil to simulate a record not found
-      # nil
-      begin
-
-        @es_url = URI.parse( ENV['ES_URL'] || @client_config[:get_record][:params][:es_host] )
-        @logger.debug "Elasticsearch Host: #{ @es_url.host}"
+      if check_elasticsearch_health()
+        @logger.debug "Elasticsearch is healthy"
+        es_index = @client_config[:get_record][:params][:es_index]
         
-        @es_url.user = ENV['ES_USER'] if ENV['ES_USER'] && ENV['ES_PASSWORD']
-        @es_url.password = ENV['ES_PASSWORD'] if ENV['ES_USER'] && ENV['ES_PASSWORD']
+        @es_url.path="/#{es_index}/_doc/#{recordid}"
 
-        @es_client = Elasticsearch::Client.new url:  @es_url, transport_options: {  ssl:  { verify: false } }
-
-        if check_elasticsearch_health()
-          @logger.debug "Elasticsearch is healthy"
-          es_index = @client_config[:get_record][:params][:es_index]
-          
-          @es_url.path="/#{es_index}/_doc/#{recordid}"
-
-          record = send_elastic_request( @es_url  ) 
-         
-          if record.status.success?
-            @logger.debug "Record retrieved successfully from Elasticsearch for ID: #{recordid}"
-            record = JSON.parse(record.body.to_s)
-            return record
-          end
-          @logger.error "Failed to retrieve record from Elasticsearch for ID: #{recordid}. Response: #{record.status}"
-        else
-          raise "Elasticsearch is not healthy"
-        end
-
-        #####  @es_client elasticsearch gem version 7.5.0 is not compatible with google-cloud-video_intelligence-v1', '~> 1.3' ####
-        exit
+        record = send_elastic_request( @es_url  ) 
         
-
-        #es_url.path = '/' + @client_config[:get_record][:params][:es_index] + '/_doc/' + recordid
-
-        #@logger.debug "Elasticsearch URL: #{es_url.to_s}"
-        #@logger.debug "Elasticsearch Params: #{@client_config[:get_record][:params]}"
-
-        #response = HTTP.follow.get(es_url)
-        #if response.status.success?
-        #  record = JSON.parse(response.body.to_s)
-        #  pp record
-        #  
-        #end
-      exit
-      rescue StandardError => e
-        @logger.error "Error retrieving record from Elasticsearch: #{e.message}"
-        @logger.error "Error retrieving record from Elasticsearch for ID: #{recordid}"
-        raise e
-      end
-    end
-
-    def check_elasticsearch_health
-            
-      health = send_elastic_request( @es_url + "/_cluster/health") 
-
-      if health.status.success?
-        @logger.debug "Elasticsearch health check successful"
-        status = JSON.parse( health.body )["status"]
-        unless status === 'green' || status=== 'yellow'
-          message = "ElasticSearch Health status not OK [ #{ status } ]"
-          @logger.error message
-          raise message
+        if record.status.success?
+          @logger.debug "Record retrieved successfully from Elasticsearch for ID: #{recordid}"
+          record = JSON.parse(record.body.to_s)
+          return record
         end
-      return true
+        @logger.error "Failed to retrieve record from Elasticsearch for ID: #{recordid}. Response: #{record.status}"
+      else
+        raise "Elasticsearch is not healthy"
       end
-      return false
 
       #####  @es_client elasticsearch gem version 7.5.0 is not compatible with google-cloud-video_intelligence-v1', '~> 1.3' ####
       exit
-      health = @es_client.cluster.health
-      @logger.debug "cluster.health.status: #{health['status']}"
       
-      if @es_client.info['version']['number'] != @es_version
-          message = "Wrong Elasticsearch version on server: #{ @es_client.info['version']['number'] } on server but expected #{ @es_version }"
-          @logger.warn message
-          raise message
-      end
 
-      unless health['status'] === 'green' || health['status'] === 'yellow'
-        message = "ElasticSearch Health status not OK [ #{health['status']} ]"
+      #es_url.path = '/' + @client_config[:get_record][:params][:es_index] + '/_doc/' + recordid
+
+      #@logger.debug "Elasticsearch URL: #{es_url.to_s}"
+      #@logger.debug "Elasticsearch Params: #{@client_config[:get_record][:params]}"
+
+      #response = HTTP.follow.get(es_url)
+      #if response.status.success?
+      #  record = JSON.parse(response.body.to_s)
+      #  pp record
+      #  
+      #end
+    exit
+    rescue StandardError => e
+      pp e
+      @logger.error "Error retrieving record from Elasticsearch: #{e.message}"
+      @logger.error "Error retrieving record from Elasticsearch for ID: #{recordid}"
+      raise e
+    end
+  end
+
+  def check_elasticsearch_health
+          
+    health = send_elastic_request( @es_url + "/_cluster/health") 
+
+    if health.status.success?
+      @logger.debug "Elasticsearch health check successful"
+      status = JSON.parse( health.body )["status"]
+      unless status === 'green' || status=== 'yellow'
+        message = "ElasticSearch Health status not OK [ #{ status } ]"
         @logger.error message
         raise message
       end
-      return true
+    return true
+    end
+    return false
+
+    #####  @es_client elasticsearch gem version 7.5.0 is not compatible with google-cloud-video_intelligence-v1', '~> 1.3' ####
+    exit
+    health = @es_client.cluster.health
+    @logger.debug "cluster.health.status: #{health['status']}"
     
+    if @es_client.info['version']['number'] != @es_version
+        message = "Wrong Elasticsearch version on server: #{ @es_client.info['version']['number'] } on server but expected #{ @es_version }"
+        @logger.warn message
+        raise message
+    end
+
+    unless health['status'] === 'green' || health['status'] === 'yellow'
+      message = "ElasticSearch Health status not OK [ #{health['status']} ]"
+      @logger.error message
+      raise message
+    end
+    return true
+  
+  rescue StandardError => e
+    @logger.error "Error checking Elasticsearch health: #{e.message}"
+    return false
+  end
+
+  def send_elastic_request(uri) 
+
+    ctx = nil
+    http_query_options = {}
+    # shouldn't use this but we all do ...
+    ctx = OpenSSL::SSL::SSLContext.new
+    ctx.verify_mode = OpenSSL::SSL::VERIFY_NONE
+    http_query_options[:ssl_context] = ctx
+
+    http = HTTP.basic_auth(user: uri.user, pass: uri.password)
+
+    pp uri
+    http.follow.get( uri,  http_query_options)
+
+  end
+
+  def language_code_to_bcp47(language)
+    if language.nil? || language.empty?
+      return nil
+    end
+
+    # Normalize the language code to lowercase
+    normalized_language = language.downcase
+
+    # Check if the language code exists in the DEFAULT_REGIONS hash
+    if DEFAULT_REGIONS.key?(normalized_language)
+      region = DEFAULT_REGIONS[normalized_language]
+      return "#{normalized_language}-#{region}"
+    else
+      @logger.warn "Language code '#{language}' not found in DEFAULT_REGIONS. Returning nil."
+      return nil
+    end
+  end 
+  
+  def rip_audio_from_video(video_file_path, audio_file_path)
+    # convert to mono channel, 16-bit PCM, 16kHz
+    if File.extname(audio_file_path) == ".flac"
+      system("ffmpeg -y -i #{video_file_path} -ac 1 -c:a flac #{audio_file_path}", exception: true) 
+    else
+      system("ffmpeg -y -i #{video_file_path} -acodec pcm_s16le -ac 1 -ar 16000 #{audio_file_path}", exception: true) 
+    end
+  end
+
+  def get_metadata_from_record(input_file)
+
+    language_code = nil
+    recordid = File.basename(input_file).gsub( Regexp.new( @client_config[:recordid_from_file_name][:search]), @client_config[:recordid_from_file_name][:replace])
+
+    # Get the record from the elasticsearch index with the process that is defined in the client config
+    begin
+      es_record = method( @client_config[:get_record][:process] ) .call(recordid)
+    rescue RuntimeError => e
+      puts "An error occurred: #{e.message}"
+      puts "Backtrace:\n#{e.backtrace.join("\n")}"
+      exit 1
     rescue StandardError => e
-      @logger.error "Error checking Elasticsearch health: #{e.message}"
-
-      return false
+      puts "An error occurred: #{e.message}"
+      puts "Backtrace:\n#{e.backtrace.join("\n")}"
+      return nil
     end
 
-    def send_elastic_request(uri) 
-
-      ctx = nil
-      http_query_options = {}
-      # shouldn't use this but we all do ...
-      ctx = OpenSSL::SSL::SSLContext.new
-      ctx.verify_mode = OpenSSL::SSL::VERIFY_NONE
-      http_query_options[:ssl_context] = ctx
-
-      http = HTTP.basic_auth(user: uri.user, pass: uri.password)
-
-      pp uri
-      http.follow.get( uri,  http_query_options)
-
-    end
-
-    def language_code_to_bcp47(language)
-      if language.nil? || language.empty?
+    if es_record.nil?  
+      @gClient.logger.warn "Record not found in Elasticsearch index for ID: #{recordid}. Skipping file: #{input_file}"
+    else
+      if es_record.is_a?(Hash) && es_record.keys.include?("error")
+        @gClient.logger.war "Error retrieving record for ID: #{recordid}. Error: #{es_record['error']}"
         return nil
       end
 
-      # Normalize the language code to lowercase
-      normalized_language = language.downcase
-
-      # Check if the language code exists in the DEFAULT_REGIONS hash
-      if DEFAULT_REGIONS.key?(normalized_language)
-        region = DEFAULT_REGIONS[normalized_language]
-        return "#{normalized_language}-#{region}"
-      else
-        @logger.warn "Language code '#{language}' not found in DEFAULT_REGIONS. Returning nil."
-        return nil
+      if es_record.is_a?(Hash) && es_record.keys.include?("_source")
+        if es_record["_source"].keys.include?("inLanguage")
+          language_code = es_record["_source"]["inLanguage"]["@id"]
+          unless language_code.nil? || language_code == "und"
+             language_code = language_code_to_bcp47(language_code)
+          end
+          if language_code.nil? || language_code == "und"
+            unless es_record["_source"]["comment"].nil?
+              es_record["_source"]["comment"] = [ es_record["_source"]["comment"] ] unless es_record["_source"]["comment"].is_a?(Array)
+              language_code_list = es_record["_source"]["comment"].map{ |l| l["inLanguage"]["@id"] }
+              language_code = language_code_list.group_by { |e| e }.max_by { |_, v| v.size }&.first
+              language_code = language_code_to_bcp47(language_code)
+            end
+          end
+        end
       end
-    end 
+    end
+    
+    {
+      record: es_record,
+      recordid: recordid,
+      language_code: language_code
+    }
+    
+
   end
 end
