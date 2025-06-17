@@ -12,8 +12,9 @@
   - '/records/input'
 :output_dir: '/records/output'
 :es_host: "http://elasticsearch:9200"
-:es_index: "icamy_indexndid_test"
+:es_index: "my_index"
 :log_file: "/app/logs/example_logging.log"
-:gconfig_file: "/app/config/video_intelligence.json"
+:gconfig_path: "/app/config/"
 :gconfig_application_credentials_file: "/app/config/application_default_credentials.json"
+:gconfig_storage_bucket: icandid
   

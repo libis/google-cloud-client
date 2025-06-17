@@ -54,7 +54,7 @@ module GCloud
         end
 
         unless @gconfig[:audio][:uri].nil?
-          google_cloud_file =  File.join( "audio_files", File.basename(@gconfig[:audio][:uri])  )
+          google_cloud_file =  File.join( "audio-files", File.basename(@gconfig[:audio][:uri])  )
           
           @gStorageClient.upload_to_google_storage(@gconfig[:audio][:uri], google_cloud_file)
           @gconfig[:audio] = { "uri": "gs://#{ @client_config[:gconfig_storage_bucket] }/#{google_cloud_file}" }

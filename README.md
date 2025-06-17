@@ -31,12 +31,16 @@ output_dir: "output_folder"  # Folder where results are stored
 es_host: "localhost:9200"  # Elasticsearch host
 es_index: "index"  # Elasticsearch index
 log_file: "log.txt"  # Log file path
-gconfig_file: "/config/video_intelligence.json"  # Google API config
+gconfig_path: "/config/"  # Google API config
 gconfig_application_credentials_file: "/config/application_default_credentials.json"  # Auth credentials
 ```
 
 ### application_default_credentials
 Refer to the Google Cloud documentation for setting up this file. (https://cloud.google.com/docs/authentication/application-default-credentials)
+
+
+### speech to text
+https://cloud.google.com/speech-to-text/docs  
 
 ### video intelligence
 https://cloud.google.com/video-intelligence/docs/text-detection  
@@ -44,6 +48,26 @@ https://cloud.google.com/video-intelligence/docs/transcription
 https://cloud.google.com/video-intelligence/docs/feature-label-detection  
 
 ## Usage
+
+
+### speech to text
+#### To run the Speech To Text process:  
+```shell
+docker-compose run --rm google_cloud_client ruby src/speech_to_text.rb
+```
+
+#### Process Overview
+1. Select files from input_dirs matching record_pattern.
+2. Extract audio in flac-format if file is an mp4
+3. Extract record_id from the filename using the get_record procedure.
+4. Update speech_to_text.json with metadata from the record (if necessary).
+5. Send the audio file to the Google Cloud Storage <gconfig_storage_bucket>/audio-files/
+6. process the uploaded file with the Speech-to-Text API
+6. Append file_generatedAtTime and record_id to the API response.
+7. Save the response to output_dir.
+8. Move the input video file to the output folder.
+
+
 ### video intelligence
 #### To run the Video Intelligence process:  
 ```shell
@@ -58,6 +82,10 @@ docker-compose run --rm google_cloud_client ruby src/video_intelligence.rb
 5. Append file_generatedAtTime and record_id to the API response.
 6. Save the response to output_dir.
 7. Move the input video file to the output folder.
+
+
+
+
 
 ## Contributing
 
