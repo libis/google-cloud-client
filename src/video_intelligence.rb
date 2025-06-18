@@ -1,6 +1,7 @@
 #encoding: UTF-8
 $LOAD_PATH << '.' << './lib'
 require 'logger'
+require 'streamio-ffmpeg'
 require_relative './lib/video_intelligence'
 
 begin
@@ -34,34 +35,42 @@ begin
 
     if File.file?(output_path) 
       gClient.logger.info "#{output_path} exists. Skipping video intelligence request for file: #{input_file}"
-      next
+      next     
     end
 
     metadata = gClient.get_metadata_from_record(input_file)
 
-    unless metadata[:language_code].nil?
+    unless metadata[:language_code].nil? || metadata[:language_code].empty?
       unless gClient.gconfig[:video_context][:text_detection_config].nil?
-        gClient.gconfig[:video_context][:text_detection_config][:language_hints] = [ gClient.gconfig[:video_context][:text_detection_config][:language_hints] , metadata[:language_code] ].flatten.compact
+        gClient.gconfig[:video_context][:text_detection_config][:language_hints] = [ gClient.gconfig[:video_context][:text_detection_config][:language_hints] , metadata[:language_code] ].flatten.compact.reject { |c| c.empty? }
       end
       unless gClient.gconfig[:video_context][:speech_transcription_config].nil?
         gClient.gconfig[:video_context][:speech_transcription_config][:language_code] = metadata[:language_code]
       end
     end
 
-    output_file = File.join( gClient.client_config[:output_dir], "#{ File.basename(input_file , File.extname(input_file) ) }_video_intelligence_#{ metadata[:language_code].gsub('-','_')}.json") 
+    gClient.client_config[:output_file] = "#{ File.basename(input_file , File.extname(input_file) ) }_video_intelligence_#{ metadata[:language_code].gsub('-','_')}.json"
+
+    output_file = File.join( gClient.client_config[:output_dir], gClient.client_config[:output_file]) 
 
     if File.file?(output_file) 
       gClient.logger.info "#{output_file} exists. Skipping #{google_ai_service} request for input_file: #{input_file}"
       next      
     end
 
-    ## This will nt use the storage option 
-    gClient.gconfig[:input_content] = File.open(input_file, 'rb') { |io| io.read }
+    if gClient.client_config[:use_google_storage]
+      gClient.client_config[:input_file] = input_file
+    else
+      ## This will notnt use the google cloud storage option 
+      gClient.gconfig[:input_content] = File.open(input_file, 'rb') { |io| io.read }
+    end
 
     response = gClient.response
 
     response[:file_generatedAtTime] = Time.now.strftime("%Y-%m-%dT%H:%M:%S.%L")
     response[:_source] = { "@id": metadata[:recordid] }      
+
+    # pp response
 
     File.open(output_file, 'w') do |f|
       f.write(  response.to_json )

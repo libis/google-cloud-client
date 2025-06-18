@@ -1,4 +1,6 @@
+#encoding: UTF-8
 require 'elasticsearch'
+require 'find'
 
 DEFAULT_REGIONS = {
  "af" => "ZA", "am" => "ET", "ar" => "001", "as" => "IN", "az" => "AZ",
@@ -25,9 +27,13 @@ module GCloud
 
   def select_files_from_dir(input_dir)
     source_files = []
+    excluded_dir =  "/tobig/"
+    
     if File.directory?(input_dir)
-      Dir.glob("#{input_dir}/*").each do |file|
-        if File.file?(file)
+      Find.find(input_dir) do |file|
+        if file.match?(excluded_dir)
+          Find.prune # Skip this directory and its contents
+        else
           unless @client_config[:record_pattern].nil?
             if file.match?(@client_config[:record_pattern])
               @logger.debug "Adding file: #{file}"
@@ -40,18 +46,14 @@ module GCloud
           end
           source_files << file
         end
-        if File.directory?(file)
-          source_files << select_files_from_dir(file)
-          source_files.flatten!
-        end
       end
-    else
+         else
       raise "Input directory does not exist: #{input_dir}"
     end
     
-    source_files
-
+    source_files 
   end
+
 
   def elasticsearch_get_record(recordid)
     # This method should be implemented to retrieve a record from Elasticsearch
@@ -193,7 +195,7 @@ module GCloud
 
   def get_metadata_from_record(input_file)
 
-    language_code = nil
+    language_code = ""
     recordid = File.basename(input_file).gsub( Regexp.new( @client_config[:recordid_from_file_name][:search]), @client_config[:recordid_from_file_name][:replace])
 
     # Get the record from the elasticsearch index with the process that is defined in the client config
@@ -221,14 +223,14 @@ module GCloud
         if es_record["_source"].keys.include?("inLanguage")
           language_code = es_record["_source"]["inLanguage"]["@id"]
           unless language_code.nil? || language_code == "und"
-             language_code = language_code_to_bcp47(language_code)
+             language_code = language_code_to_bcp47(language_code) || ""
           end
           if language_code.nil? || language_code == "und"
             unless es_record["_source"]["comment"].nil?
               es_record["_source"]["comment"] = [ es_record["_source"]["comment"] ] unless es_record["_source"]["comment"].is_a?(Array)
               language_code_list = es_record["_source"]["comment"].map{ |l| l["inLanguage"]["@id"] }
               language_code = language_code_list.group_by { |e| e }.max_by { |_, v| v.size }&.first
-              language_code = language_code_to_bcp47(language_code)
+              language_code = language_code_to_bcp47(language_code) || ""
             end
           end
         end

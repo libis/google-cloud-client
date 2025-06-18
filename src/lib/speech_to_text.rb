@@ -56,7 +56,7 @@ module GCloud
         unless @gconfig[:audio][:uri].nil?
           google_cloud_file =  File.join( "audio-files", File.basename(@gconfig[:audio][:uri])  )
           
-          @gStorageClient.upload_to_google_storage(@gconfig[:audio][:uri], google_cloud_file)
+          @gStorageClient.upload_to_google_storage(source: @gconfig[:audio][:uri], target: google_cloud_file)
           @gconfig[:audio] = { "uri": "gs://#{ @client_config[:gconfig_storage_bucket] }/#{google_cloud_file}" }
           
           operation = @client.long_running_recognize @gconfig
@@ -68,13 +68,8 @@ module GCloud
           
           pp "Operation finished with transcription model: #{@gconfig[:config][:model]}"
 
-          # TEST DEDUG
-          #transcription_file_path = "/records/output/test_speech_to_text.json"
-          #File.open(transcription_file_path, 'r') do |f|
-          #  return JSON.parse(  f.read )
-          #end
 
-          @gStorageClient.remove_from_google_storage(google_cloud_file)
+          @gStorageClient.remove_from_google_storage(file: google_cloud_file)
 
           return JSON.parse( operation.response.to_json , symbolize_names: true)
           

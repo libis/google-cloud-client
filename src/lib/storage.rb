@@ -55,11 +55,11 @@ module GCloud
         end
       end
 
-      def upload_to_google_storage(source_file,target_file)
-        if File.exist?(source_file)
-          @bucket.create_file(source_file,target_file)
+      def upload_to_google_storage(source:, target:)
+        if File.exist?(source)
+          @bucket.create_file(source,target)
         else
-          raise "Failed to upload #{source_file}. It does not exist."
+          raise "Failed to upload #{source}. It does not exist."
         end
       rescue Exception => e
         pp e
@@ -67,15 +67,20 @@ module GCloud
       end
       
 
-      def download_to_google_storage(source_file,target_file)
-        file = @bucket.file(source_file)
-        file.download(target_file)
+      def download_from_google_storage(source:, target:)
+        file = @bucket.file(source)
+        if file&.exists?
+          file.download target, verify: :none
+        else
+          raise "#{source} Not found in Google Cloud Storage" 
+        end
       rescue Exception => e
+        pp "Error in download_from_google_storage"
         pp e
         # no no no
       end
 
-      def remove_from_google_storage(file)
+      def remove_from_google_storage(file:)
         file = @bucket.file(file)
         unless file.nil?
           file.delete

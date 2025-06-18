@@ -2,6 +2,7 @@
 require "google/cloud/video_intelligence/v1"
 require 'data_collector'
 require_relative './helper'
+require_relative './storage'
 
 module GCloud
   module VideoIntelligence
@@ -36,29 +37,97 @@ module GCloud
 
         @client = Google::Cloud::VideoIntelligence::V1::VideoIntelligenceService::Client.new
         @gconfig = JSON.parse(  File.read(@client_config[:gconfig_file]) , symbolize_names: true)
+
+
+        if @client_config[:use_google_storage]
+          @gStorageClient = GCloud::Storage::Client.new
+          @gStorageClient.logger = Logger.new(STDOUT)
+
+          @gStorageClient.logger.info "Starting Google Storage Client"
+          @gStorageClient.client_config.keys
+        end
+
       end
 
       def response
         @logger.debug "Starting video annotation process with Google Video Intelligence API"
         @logger.debug "Client configuration: features #{@gconfig[:features]}"
         @logger.debug "Client configuration: video_context #{@gconfig[:video_context]}"
+
+        unless @client_config[:input_file].nil?
+          video = FFMPEG::Movie.new(@client_config[:input_file] )
+          max_video_duration = @client_config[:max_video_duration] || 60 * 10 # 10 min.
+
+          pp max_video_duration
+          pp video.duration 
+
+          if video.duration > max_video_duration
+            @logger.warn "Skipping automatic processing: #{@client_config[:input_file]} exceeds the maximum allowed duration of #{max_video_duration} seconds."
+
+            big_file = File.join(  File.dirname(@client_config[:input_file]), "tobig/#{ File.basename(@client_config[:input_file] , File.extname(@client_config[:input_file]) ) }#{File.extname(@client_config[:input_file])}") 
+            big_file_dirname = File.dirname( big_file ) 
+            FileUtils.mkdir_p(big_file_dirname) unless File.directory?( big_file_dirname )
+
+            @logger.warn "#{@client_config[:input_file]} moved to #{ big_file } "
+
+            FileUtils.move(@client_config[:input_file], big_file)
+
+            raise "#{@client_config[:input_file]} sikpped! It #{@client_config[:input_file]} exceeds the maximum allowed duration of #{max_video_duration} seconds.\n   -->> #{@client_config[:input_file]} moved to #{ big_file }"
+          end
+
+          if  @client_config[:use_google_storage] && video.duration > 30 # don't use Storage if duration is less than 30 sec
+            google_cloud_input_file =  File.join( "video-files", File.basename(@client_config[:input_file])  )
+            @logger.info "Upload to Google cloud Storage #{google_cloud_input_file}"
+
+            @gStorageClient.upload_to_google_storage( source: @client_config[:input_file], target: google_cloud_input_file)
+
+            google_cloud_output_file =  File.join( "transcripts/video/", File.basename(@client_config[:output_file])  )
+
+            @gconfig[:input_uri] = "gs://#{ @client_config[:gconfig_storage_bucket] }/#{google_cloud_input_file}" 
+            @gconfig[:output_uri] = "gs://#{ @client_config[:gconfig_storage_bucket] }/#{google_cloud_output_file}"
+
+            @gconfig.delete(:input_content)
+
+            operation = @client.annotate_video(::Google::Cloud::VideoIntelligence::V1::AnnotateVideoRequest.new ( @gconfig ) )
+            puts "Operation started"
+
+            # ?????? https://cloud.google.com/video-intelligence/docs/long-running-operations
+            operation.wait_until_done!
+            raise operation if operation.error?
+
+            pp "Operation finished! Output available in #{@gconfig[:output_uri]}"
+
+            output_file = File.join( @client_config[:output_dir], @client_config[:output_file]) 
+
+            @logger.info "Download annotations to #{google_cloud_output_file}"
+            @gStorageClient.download_from_google_storage(  source: google_cloud_output_file,  target: output_file)
+            
+            #@gStorageClient.remove_from_google_storage(file: google_cloud_output_file) 
+
+            @gStorageClient.remove_from_google_storage(file: google_cloud_input_file)
+
+            return JSON.parse( File.read(output_file) , symbolize_names: true)
+          else
+            
+            if @gconfig[:input_content].nil?
+              @gconfig.delete(:input_uri)
+              @gconfig[:input_content] = File.open( @client_config[:input_file], 'rb') { |io| io.read }
+            end
+
+            operation = @client.annotate_video(::Google::Cloud::VideoIntelligence::V1::AnnotateVideoRequest.new ( @gconfig ) )
+            operation.wait_until_done!
+            operation.results
+            raise operation.results.message if operation.error?
+            return JSON.parse( operation.response.to_json , symbolize_names: true)
+
+          end  
+
+        end
         
-        # TODO
-        # implement Google cloud Storage
-
-        operation = @client.annotate_video(::Google::Cloud::VideoIntelligence::V1::AnnotateVideoRequest.new ( @gconfig ) )
-        
-        operation.wait_until_done!
-
-        operation.results
-
-
-        raise operation.results.message if operation.error?
-
-        return JSON.parse( operation.response.to_json , symbolize_names: true)
-
-
-
+      rescue StandardError => e
+        puts "Error in Google::Cloud::VideoIntelligence::V1::AnnotateVideoRequest"
+        puts e
+        raise e
       end
 
       def select_files
