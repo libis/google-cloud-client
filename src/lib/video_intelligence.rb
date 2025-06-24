@@ -6,6 +6,8 @@ require_relative './storage'
 
 module GCloud
   module VideoIntelligence
+   class ToLargeFileError < StandardError; end
+
    class Client
       include DataCollector::Core
       include GCloud
@@ -27,6 +29,8 @@ module GCloud
         if @client_config[:gconfig_application_credentials_file].nil?
           raise "Please set the path of your Google Cloud service account credentials JSON file. example: /app/config/application_default_credentials.json"
         end
+
+        @client_config[:max_video_duration] = @client_config[:max_video_duration] || 60 * 10 # 10 min.
         ENV['GOOGLE_APPLICATION_CREDENTIALS'] = @client_config[:gconfig_application_credentials_file]
 
         @client_config[:gconfig_file] = File.join( @client_config[:gconfig_path], GCLOUD_SERIVCE_CONFIG_FILE )
@@ -56,23 +60,9 @@ module GCloud
 
         unless @client_config[:input_file].nil?
           video = FFMPEG::Movie.new(@client_config[:input_file] )
-          max_video_duration = @client_config[:max_video_duration] || 60 * 10 # 10 min.
 
-          pp max_video_duration
-          pp video.duration 
-
-          if video.duration > max_video_duration
-            @logger.warn "Skipping automatic processing: #{@client_config[:input_file]} exceeds the maximum allowed duration of #{max_video_duration} seconds."
-
-            big_file = File.join(  File.dirname(@client_config[:input_file]), "tobig/#{ File.basename(@client_config[:input_file] , File.extname(@client_config[:input_file]) ) }#{File.extname(@client_config[:input_file])}") 
-            big_file_dirname = File.dirname( big_file ) 
-            FileUtils.mkdir_p(big_file_dirname) unless File.directory?( big_file_dirname )
-
-            @logger.warn "#{@client_config[:input_file]} moved to #{ big_file } "
-
-            FileUtils.move(@client_config[:input_file], big_file)
-
-            raise "#{@client_config[:input_file]} sikpped! It #{@client_config[:input_file]} exceeds the maximum allowed duration of #{max_video_duration} seconds.\n   -->> #{@client_config[:input_file]} moved to #{ big_file }"
+          if video.duration > @client_config[:max_video_duration] 
+            raise ToLargeFileError, "#{@client_config[:input_file]} sikpped! It #{@client_config[:input_file]} exceeds the maximum allowed duration of #{@client_config[:max_video_duration] } seconds."
           end
 
           if  @client_config[:use_google_storage] && video.duration > 30 # don't use Storage if duration is less than 30 sec
@@ -123,10 +113,21 @@ module GCloud
           end  
 
         end
-        
+      rescue ToLargeFileError => e
+        @logger.warn "Skipping automatic processing: #{@client_config[:input_file]} exceeds the maximum allowed duration of #{@client_config[:max_video_duration] } seconds."
+
+        big_file = File.join(  File.dirname(@client_config[:input_file]), "tobig/#{ File.basename(@client_config[:input_file] , File.extname(@client_config[:input_file]) ) }#{File.extname(@client_config[:input_file])}") 
+        big_file_dirname = File.dirname( big_file ) 
+
+        FileUtils.mkdir_p(big_file_dirname) unless File.directory?( big_file_dirname )
+
+        @logger.warn "#{@client_config[:input_file]} moved to #{ big_file } "
+
+        FileUtils.move(@client_config[:input_file], big_file)
+        puts "Client Error: #{e.message}"
+        raise e
       rescue StandardError => e
-        puts "Error in Google::Cloud::VideoIntelligence::V1::AnnotateVideoRequest"
-        puts e
+        puts "Error in VideoIntelligence::Client: #{e.message}"
         raise e
       end
 
