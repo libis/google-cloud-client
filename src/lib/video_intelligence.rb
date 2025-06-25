@@ -66,33 +66,51 @@ module GCloud
           end
 
           if  @client_config[:use_google_storage] && video.duration > 30 # don't use Storage if duration is less than 30 sec
-            google_cloud_input_file =  File.join( "video-files", File.basename(@client_config[:input_file])  )
-            @logger.info "Upload to Google cloud Storage #{google_cloud_input_file}"
 
-            @gStorageClient.upload_to_google_storage( source: @client_config[:input_file], target: google_cloud_input_file)
+            @gconfig[:output_uri] = "gs://#{ @client_config[:gconfig_storage_bucket] }/#{google_cloud_output_file}"
+            @gconfig[:input_uri] = "gs://#{ @client_config[:gconfig_storage_bucket] }/#{google_cloud_input_file}" 
 
             google_cloud_output_file =  File.join( "transcripts/video/", File.basename(@client_config[:output_file])  )
+            output_file = File.join( @client_config[:output_dir], @client_config[:output_file]) 
 
-            @gconfig[:input_uri] = "gs://#{ @client_config[:gconfig_storage_bucket] }/#{google_cloud_input_file}" 
-            @gconfig[:output_uri] = "gs://#{ @client_config[:gconfig_storage_bucket] }/#{google_cloud_output_file}"
+
+            if @gStorageClient.file_exists?(file: google_cloud_output_file)
+              @logger.info "Output file with annotations already exists in Google Storage: #{@gconfig[:output_uri]}"
+              @gStorageClient.download_from_google_storage(  source: google_cloud_output_file,  target: output_file)
+            
+              @gStorageClient.remove_from_google_storage(file: google_cloud_output_file) 
+              @gStorageClient.remove_from_google_storage(file: google_cloud_input_file)
+              
+              return JSON.parse( File.read(output_file) , symbolize_names: true)
+            end
+
+            
+            google_cloud_input_file =  File.join( "video-files", File.basename(@client_config[:input_file])  )
+            @logger.info "Upload to Google cloud Storage #{google_cloud_input_file}"
+            @gStorageClient.upload_to_google_storage( source: @client_config[:input_file], target: google_cloud_input_file)
 
             @gconfig.delete(:input_content)
+            
+            begin 
+              operation = @client.annotate_video(::Google::Cloud::VideoIntelligence::V1::AnnotateVideoRequest.new ( @gconfig ) )
+              puts "Operation started"
 
-            operation = @client.annotate_video(::Google::Cloud::VideoIntelligence::V1::AnnotateVideoRequest.new ( @gconfig ) )
-            puts "Operation started"
+              # ?????? https://cloud.google.com/video-intelligence/docs/long-running-operations
+              operation.wait_until_done!
+              raise operation if operation.error?
+              pp "Operation finished! Output available in #{@gconfig[:output_uri]}"
 
-            # ?????? https://cloud.google.com/video-intelligence/docs/long-running-operations
-            operation.wait_until_done!
-            raise operation if operation.error?
-
-            pp "Operation finished! Output available in #{@gconfig[:output_uri]}"
-
-            output_file = File.join( @client_config[:output_dir], @client_config[:output_file]) 
+            rescue Google::Cloud::ResourceExhaustedError => e  
+              @logger.error "Resource Exhausted: #{e.message}"
+            rescue StandardError => e
+              @gStorageClient.download_from_google_storage(  source: google_cloud_output_file,  target: output_file)
+              raise e
+            end
 
             @logger.info "Download annotations to #{google_cloud_output_file}"
             @gStorageClient.download_from_google_storage(  source: google_cloud_output_file,  target: output_file)
             
-            #@gStorageClient.remove_from_google_storage(file: google_cloud_output_file) 
+            @gStorageClient.remove_from_google_storage(file: google_cloud_output_file) 
 
             @gStorageClient.remove_from_google_storage(file: google_cloud_input_file)
 

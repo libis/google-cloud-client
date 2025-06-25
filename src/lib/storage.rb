@@ -55,6 +55,15 @@ module GCloud
         end
       end
 
+      def file_exists?(file:)
+        file = @bucket.file(file)
+        unless file.nil?
+          true
+        else
+          false
+        end
+      end
+
       def upload_to_google_storage(source:, target:)
         if File.exist?(source)
           @bucket.create_file(source,target)
