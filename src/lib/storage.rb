@@ -7,19 +7,33 @@ module GCloud
   module Storage
    class Client
       include DataCollector::Core
-      include GCloud::Storage
+      include GCloud
 
       attr_accessor :client, :logger, :gconfig, :client_config
 
-      def initialize
-        @logger = Logger.new(STDOUT)
-        @logger.level = Logger::DEBUG
+      def initialize(client_config: nil, client: nil, logger: Logger.new(STDOUT), gconfig: {})
 
-        # Set up the DataCollector configuration
-        @client_config = DataCollector::Core.config
-        
-        @client_config.path  = '/app/config/'
-        @client_config.name  = 'config.yml'
+        @client_config = client_config
+        @client = client
+        @logger = logger
+        @gconfig = gconfig
+
+        @logger.level = Logger::DEBUG   
+
+        if @client_config.nil?
+          # Set up the DataCollector configuration
+          @client_config = DataCollector::Core.config
+          
+          @client_config.path  = '/app/config/'
+          @client_config.name  = 'config.yml'
+
+          commandline_arguments = parse_commandline_arguments()
+          if commandline_arguments[:config_file]
+            @client_config.path = File.dirname(commandline_arguments[:config_file])
+            @client_config.name = File.basename(commandline_arguments[:config_file])
+          end     
+          
+        end
 
         if @client_config[:gconfig_application_credentials_file].nil?
           raise "Please set the path of your Google Cloud service account credentials JSON file. example: /app/config/application_default_credentials.json"
@@ -39,19 +53,18 @@ module GCloud
         ENV['GOOGLE_CLOUD_PROJECT'] = @gconfig[:quota_project_id]
 
         @client = Google::Cloud::Storage.new()
-
         @bucket = @client.bucket @client_config[:gconfig_storage_bucket]
 
       end
     
 
       def read_buckets
-        pp "######################### Bucket wired-coder-368209 overview "
+        #pp "######################### Bucket wired-coder-368209 overview "
         @client.buckets.all do |bucket|
-          puts bucket.name
-          puts  "-------------------"
-          puts bucket.location
-          puts bucket.files.count
+        #  puts bucket.name
+        # puts  "-------------------"
+        #  puts bucket.location
+        #  puts bucket.files.count
         end
       end
 

@@ -1,6 +1,7 @@
 #encoding: UTF-8
 $LOAD_PATH << '.' << './lib'
 require 'logger'
+require 'mustache'
 require_relative './lib/speech_to_text'
 
 begin
@@ -16,6 +17,7 @@ begin
   gClient.logger = Logger.new(STDOUT)
 
   gClient.logger.info "Starting Google #{google_ai_service} Client"
+
   input_files =  gClient.select_files
   gClient.logger.info "Selected input files: #{input_files}"
   gClient.logger.info "Input files count: #{input_files.count}"
@@ -28,18 +30,43 @@ begin
   input_files.each do |input_file|
     gClient.logger.info "Processing file: #{input_file}"
 
+    recordid = gClient.get_record_id(input_file)
+
     unless gClient.gconfig.nil?
       initial_config = gClient.gconfig.clone
     end
 
-    audio_file = input_file
+    if File.extname(input_file) == ".json"
+      input_hash = JSON.parse(File.read(input_file)) 
+      audio_file = gClient.get_related_media_file(input_file)
+      metadata = {}
+      # "$..data.items[?(@.id == '#{recordid}')].category.snippet.title"
+      # "$..data.items[?(@.id == '#{recordid}')]"   
+      if gClient.client_config[:metadata_from_input]
+        gClient.client_config[:metadata_from_input].each do |tag, jpath|
+          tag = tag.to_s.gsub('_jpath', '').to_sym
+          jpath =  jpath.gsub('{{recordid}}', recordid)
+          path = JsonPath.new( jpath )
+          metadata[tag] = path.on(input_hash).first unless path.on(input_hash).empty? 
+        end
+      end
+    else
+      metadata = gClient.get_metadata_from_record(input_file)
+      audio_file = input_file
+    end
+
+    if audio_file.nil? || audio_file.empty?
+      raise "No audio file found for input file: #{input_file}"
+    end
+
+    gClient.logger.info "Media file (audio): #{audio_file}"
+    gClient.logger.info "metadata_file: #{input_file}"
 
     if File.extname(audio_file) == ".mp4"
       audio_file = "#{File.dirname(audio_file)}/#{File.basename(audio_file,'.*')}.flac"
       begin
         gClient.rip_audio_from_video(input_file, audio_file)
       rescue
-        pp "MAY DAY MAY DAY"
         gClient.logger.warn "Unable to extract audio from #{input_file}"
         exit
         next
@@ -49,23 +76,34 @@ begin
     gClient.gconfig[:audio][:uri] = audio_file
 
     audio_file_metadata = Exiftool.new(audio_file)
-
+   
     unless audio_file_metadata.to_hash[:sample_rate].nil?
-       gClient.gconfig[:config][:sample_rate_hertz] = audio_file_metadata.to_hash[:sample_rate]
+      gClient.gconfig[:config][:sample_rate_hertz]   = audio_file_metadata.to_hash[:sample_rate]
+      gClient.gconfig[:config][:audio_channel_count] = audio_file_metadata.to_hash[:channels]
     end
 
     if File.extname(audio_file) == ".flac"
-       gClient.gconfig[:config][:encoding] = "FLAC"
+      gClient.gconfig[:config][:encoding] = "FLAC"
     end
 
-    metadata = gClient.get_metadata_from_record(input_file)
-
-    unless metadata[:language_code].nil?
+    # use default language code (as configured in speech_to_text.json) if not provided
+    unless metadata.nil? || metadata[:language_code].nil? || metadata[:language_code].empty?
       gClient.gconfig[:config][:language_code] = metadata[:language_code]
       gClient.gconfig[:config][:alternative_language_codes] = [ gClient.gconfig[:config][:alternative_language_codes] , metadata[:language_code] ].flatten.compact
     end
 
-    output_file = File.join( gClient.client_config[:output_dir], "#{ File.basename(input_file , File.extname(input_file) ) }_speech_to_text_#{ metadata[:language_code].gsub('-','_')}.json") 
+    metadata[:google_ai_service] = google_ai_service.downcase.gsub(' ', '_')
+    metadata[:language_code] = gClient.gconfig[:config][:language_code]
+
+
+    unless gClient.client_config[:output_file_template].nil? || gClient.client_config[:output_file_template].empty?
+      output_file = gClient.client_config[:output_file_template]
+      output_file= Mustache.render(gClient.client_config[:output_file_template], metadata)
+      output_file = File.join( gClient.client_config[:output_dir], output_file ) 
+    else
+      output_file = File.join( gClient.client_config[:output_dir], "#{ File.basename(input_file , File.extname(input_file) ) }_speech_to_text_#{ gClient.gconfig[:config][:language_code].gsub('-','_')}.json") 
+    end
+    
 
     if File.file?(output_file) 
       gClient.logger.info "#{output_file} exists. Skipping #{google_ai_service} request for input_file: #{input_file}"
@@ -77,6 +115,9 @@ begin
     response[:file_generatedAtTime] = Time.now.strftime("%Y-%m-%dT%H:%M:%S.%L")
     response[:_source] = { "@id": metadata[:recordid] }      
 
+    output_dir = File.dirname( output_file ) 
+    FileUtils.mkdir_p(output_dir) unless File.directory?( output_dir )
+    
     File.open(output_file, 'w') do |f|
       f.write(  response.to_json )
     end

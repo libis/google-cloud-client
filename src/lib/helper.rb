@@ -25,12 +25,49 @@ DEFAULT_REGIONS = {
 
 module GCloud
 
+  def get_record_id(input_file)
+    File.basename(input_file).gsub( Regexp.new( @client_config[:recordid_from_file_name][:search] ), @client_config[:recordid_from_file_name][:replace])
+  end
+
+  def parse_commandline_arguments
+    
+    options = {}
+
+    parser = OptionParser.new do |opts|
+      opts.banner = "Usage: script.rb [options]"
+
+      opts.on("-c", "--config FILE", "Path to config file") do |file|
+        options[:config_file] = file
+      end
+
+      opts.on("-h", "--help", "Prints this help") do
+        puts opts
+        exit
+      end
+    end
+    
+    # Parse the command-line arguments
+    begin
+      parser.parse!
+      return options
+    rescue OptionParser::InvalidOption => e
+      puts e
+      puts parser
+      exit 1
+    end
+
+  end
+
   def select_files_from_dir(input_dir)
     source_files = []
     excluded_dir =  "/tobig/"
     
     if File.directory?(input_dir)
       Find.find(input_dir) do |file|
+        if File.directory?(file)
+          @logger.debug "Skipping directories: #{file}"
+          next # Skip directories
+        end
         if file.match?(excluded_dir)
           Find.prune # Skip this directory and its contents
         else
@@ -54,14 +91,30 @@ module GCloud
     source_files 
   end
 
+  def search_file_in_dir(recordid, params: {})
+    dirs = params[:dirs] || []
+    found_file = nil
 
-  def elasticsearch_get_record(recordid)
+    dirs.each do |dir|
+      Find.find(dir) do |file|
+        if File.file?(file) && File.basename(file).include?(recordid)
+          found_file = file
+          @logger.debug "Found file: #{found_file}"
+          break
+        end
+      end
+      break if found_file # Exit the loop if the file is found
+    end
+    found_file
+  end
+
+  def elasticsearch_get_record(recordid, params: {})
     # This method should be implemented to retrieve a record from Elasticsearch
     # For now, it returns nil to simulate a record not found
     # nil
     begin
 
-      @es_url = URI.parse( ENV['ES_URL'] || @client_config[:get_record][:params][:es_host] )
+      @es_url = URI.parse( ENV['ES_URL'] ||params[:es_host] )
       @logger.debug "Elasticsearch Host: #{ @es_url.host}"
       
       @es_url.user = ENV['ES_USER'] if ENV['ES_USER'] && ENV['ES_PASSWORD']
@@ -71,7 +124,7 @@ module GCloud
 
       if check_elasticsearch_health()
         @logger.debug "Elasticsearch is healthy"
-        es_index = @client_config[:get_record][:params][:es_index]
+        es_index = params[:es_index]
         
         @es_url.path="/#{es_index}/_doc/#{recordid}"
 
@@ -91,10 +144,10 @@ module GCloud
       exit
       
 
-      #es_url.path = '/' + @client_config[:get_record][:params][:es_index] + '/_doc/' + recordid
+      #es_url.path = '/' + @client_config[:get_record_metadata][:params][:es_index] + '/_doc/' + recordid
 
       #@logger.debug "Elasticsearch URL: #{es_url.to_s}"
-      #@logger.debug "Elasticsearch Params: #{@client_config[:get_record][:params]}"
+      #@logger.debug "Elasticsearch Params: #{@client_config[:get_record_metadata][:params]}"
 
       #response = HTTP.follow.get(es_url)
       #if response.status.success?
@@ -194,13 +247,16 @@ module GCloud
   end
 
   def get_metadata_from_record(input_file)
-
+    @logger.info "Search related metadata file for ID: #{recordid}"
     language_code = ""
-    recordid = File.basename(input_file).gsub( Regexp.new( @client_config[:recordid_from_file_name][:search]), @client_config[:recordid_from_file_name][:replace])
+    recordid = get_record_id(input_file)
+    
 
+    @logger.debug "Extracting metadata fom record with ID: #{recordid}"
     # Get the record from the elasticsearch index with the process that is defined in the client config
+
     begin
-      es_record = method( @client_config[:get_record][:process] ) .call(recordid)
+      record_metadata = method( @client_config[:get_record_metadata][:process] ).call(recordid, params: @client_config[:get_record_metadata][:params])
     rescue RuntimeError => e
       puts "An error occurred: #{e.message}"
       puts "Backtrace:\n#{e.backtrace.join("\n")}"
@@ -211,24 +267,23 @@ module GCloud
       return nil
     end
 
-    if es_record.nil?  
-      @gClient.logger.warn "Record not found in Elasticsearch index for ID: #{recordid}. Skipping file: #{input_file}"
+    if record_metadata.nil?
+      @logger.warn "Record not found with #{@client_config[:get_record_metadata][:process]} for ID: #{recordid}."
     else
-      if es_record.is_a?(Hash) && es_record.keys.include?("error")
-        @gClient.logger.war "Error retrieving record for ID: #{recordid}. Error: #{es_record['error']}"
+      if record_metadata.is_a?(Hash) && record_metadata.keys.include?("error")
+        @logger.warn "Error retrieving record for ID: #{recordid}. Error: #{record_metadata['error']}"
         return nil
       end
-
-      if es_record.is_a?(Hash) && es_record.keys.include?("_source")
-        if es_record["_source"].keys.include?("inLanguage")
-          language_code = es_record["_source"]["inLanguage"]["@id"]
+      if record_metadata.is_a?(Hash) && record_metadata.keys.include?("_source")
+        if record_metadata["_source"].keys.include?("inLanguage")
+          language_code = record_metadata["_source"]["inLanguage"]["@id"]
           unless language_code.nil? || language_code == "und"
              language_code = language_code_to_bcp47(language_code) || ""
           end
           if language_code.nil? || language_code == "und"
-            unless es_record["_source"]["comment"].nil?
-              es_record["_source"]["comment"] = [ es_record["_source"]["comment"] ] unless es_record["_source"]["comment"].is_a?(Array)
-              language_code_list = es_record["_source"]["comment"].map{ |l| l["inLanguage"]["@id"] }
+            unless record_metadata["_source"]["comment"].nil?
+              record_metadata["_source"]["comment"] = [ record_metadata["_source"]["comment"] ] unless record_metadata["_source"]["comment"].is_a?(Array)
+              language_code_list = record_metadata["_source"]["comment"].map{ |l| l["inLanguage"]["@id"] }
               language_code = language_code_list.group_by { |e| e }.max_by { |_, v| v.size }&.first
               language_code = language_code_to_bcp47(language_code) || ""
             end
@@ -238,11 +293,37 @@ module GCloud
     end
     
     {
-      record: es_record,
+      record: record_metadata,
       recordid: recordid,
       language_code: language_code
     }
-    
 
   end
+
+  def get_related_media_file(input_file)
+    @logger.info "Search related media file for ID: #{input_file}"
+    recordid = File.basename(input_file).gsub( Regexp.new( @client_config[:recordid_from_file_name][:search]), @client_config[:recordid_from_file_name][:replace])
+
+    # Get the record from the elasticsearch index with the process that is defined in the client config
+    begin
+      media_file = method( @client_config[:get_record_media][:process] ).call(recordid, params: @client_config[:get_record_media][:params])
+    rescue RuntimeError => e
+      puts "An error occurred: #{e.message}"
+      puts "Backtrace:\n#{e.backtrace.join("\n")}"
+      exit 1
+    rescue StandardError => e
+      puts "An error occurred: #{e.message}"
+      puts "Backtrace:\n#{e.backtrace.join("\n")}"
+      return nil
+    end
+
+    if media_file.nil?
+      @logger.warn "No media_file found with #{ @client_config[:get_record_media][:process] } for ID: #{recordid}"
+      return nil
+    else
+      return media_file
+    end
+
+  end
+ 
 end

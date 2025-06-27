@@ -2,6 +2,8 @@
 require 'exiftool_vendored'
 require "google/cloud/speech/v1" # https://cloud.google.com/ruby/docs/reference/google-cloud-speech-v1/latest
 require 'data_collector'
+require 'optparse'
+
 require_relative './helper'
 require_relative './storage'
 
@@ -14,32 +16,47 @@ module GCloud
       attr_accessor :client, :logger, :gconfig, :client_config
 
       GCLOUD_SERIVCE_CONFIG_FILE="speech_to_text.json"
-      def initialize
-        @logger = Logger.new(STDOUT)
+
+      def initialize(client_config: nil, client: nil, logger: Logger.new(STDOUT), gconfig: {})
+        @client_config = client_config
+        @client = client
+        @logger = logger
+        @gconfig = gconfig
+
         @logger.level = Logger::DEBUG
 
-        # Set up the DataCollector configuration
-        @client_config = DataCollector::Core.config
-        
-        @client_config.path  = '/app/config/'
-        @client_config.name  = 'config.yml'
+        if @client_config.nil?
+          # Set up the DataCollector configuration
+          @client_config = DataCollector::Core.config
+          
+          @client_config.path  = '/app/config/'
+          @client_config.name  = 'config.yml'
+
+          commandline_arguments = parse_commandline_arguments()
+          if commandline_arguments[:config_file]
+            @client_config.path = File.dirname(commandline_arguments[:config_file])
+            @client_config.name = File.basename(commandline_arguments[:config_file])
+          end     
+
+        end
 
         if @client_config[:gconfig_application_credentials_file].nil?
           raise "Please set the path of your Google Cloud service account credentials JSON file. example: /app/config/application_default_credentials.json"
         end
         ENV['GOOGLE_APPLICATION_CREDENTIALS'] = @client_config[:gconfig_application_credentials_file]
 
-        @client_config[:gconfig_file] = File.join( @client_config[:gconfig_path], GCLOUD_SERIVCE_CONFIG_FILE )
         if @client_config[:gconfig_file].nil?
-           @logger.error ("Unable to find #{ @client_config[:gconfig_file]}")
-          raise "Please set the gconfig_path of the service config. example: /app/config/"
+          @client_config[:gconfig_file] = File.join( @client_config[:gconfig_path], GCLOUD_SERIVCE_CONFIG_FILE )
+          if @client_config[:gconfig_file].nil?
+            @logger.error ("Unable to find #{ @client_config[:gconfig_file]}")
+            raise "Please set the gconfig_path of the service config. example: /app/config/"
+          end
         end
 
         @client = Google::Cloud::Speech::V1::Speech::Client.new
         @gconfig = JSON.parse(  File.read(@client_config[:gconfig_file]) , symbolize_names: true)
 
-        @gStorageClient = GCloud::Storage::Client.new
-        @gStorageClient.logger = Logger.new(STDOUT)
+        @gStorageClient = GCloud::Storage::Client.new(client_config: @client_config, logger:@logger)
 
         @gStorageClient.logger.info "Starting Google Storage Client"
         @gStorageClient.client_config.keys
@@ -47,8 +64,11 @@ module GCloud
 
       end
 
+
+
+
       def response
-        pp @gconfig
+
         if @gconfig[:audio][:uri].nil? && @gconfig[:audio][:content].nil?
           raise "No audio provided to process"
         end
@@ -58,7 +78,7 @@ module GCloud
           
           @gStorageClient.upload_to_google_storage(source: @gconfig[:audio][:uri], target: google_cloud_file)
           @gconfig[:audio] = { "uri": "gs://#{ @client_config[:gconfig_storage_bucket] }/#{google_cloud_file}" }
-          
+
           operation = @client.long_running_recognize @gconfig
           puts "Operation started"
 
@@ -67,7 +87,6 @@ module GCloud
           raise operation.results.message if operation.error?
           
           pp "Operation finished with transcription model: #{@gconfig[:config][:model]}"
-
 
           @gStorageClient.remove_from_google_storage(file: google_cloud_file)
 

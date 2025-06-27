@@ -22,16 +22,20 @@ The application uses the following configuration files:
 record_pattern: ".*.mp4"  # Pattern used to select input files
 recordid_from_file_name: # Extract record ID from filename using search and replace
   :search: 'regex' #regex 
-   :replace: 'xxx_\1' #reges with groups
-get_record:
+  :replace: 'xxx_\1' #reges with groups
+get_record_metadata:
   process: elasticsearch_get_record  # Process to retrieve record metadata
   params:   # Parameters for the process
+get_record_media:
+  process: search_file_in_dir  # Process to retrieve record metadata
+  params:  # Parameters for the proces
 input_dirs: ["input_folder"]  # Folders to search for input files
 output_dir: "output_folder"  # Folder where results are stored
 es_host: "localhost:9200"  # Elasticsearch host
 es_index: "index"  # Elasticsearch index
 log_file: "log.txt"  # Log file path
 gconfig_path: "/config/"  # Google API config
+gconfig_file: "/app/config/speech_to_text_youtube.json" # path to the config file for the Google API Client
 gconfig_application_credentials_file: "/config/application_default_credentials.json"  # Auth credentials
 ```
 
@@ -54,6 +58,9 @@ https://cloud.google.com/video-intelligence/docs/feature-label-detection
 #### To run the Speech To Text process:  
 ```shell
 docker-compose run --rm google_cloud_client ruby src/speech_to_text.rb
+
+docker-compose run --rm google_cloud_client ruby speech_to_text.rb -c /app/config/config_youtube.yml
+
 ```
 
 #### Process Overview
@@ -71,7 +78,8 @@ docker-compose run --rm google_cloud_client ruby src/speech_to_text.rb
 ### video intelligence
 #### To run the Video Intelligence process:  
 ```shell
-docker-compose run --rm google_cloud_client ruby src/video_intelligence.rb
+docker-compose run --rm google_cloud_client ruby src/video_intelligence.rb 
+
 ```
 
 #### Process Overview
