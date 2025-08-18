@@ -16,35 +16,47 @@ module GCloud
 
       GCLOUD_SERIVCE_CONFIG_FILE="video_intelligence.json"
 
-      def initialize
-        @logger = Logger.new(STDOUT)
+      def initialize(client_config: nil, client: nil, logger: Logger.new(STDOUT), gconfig: {})
+        @client_config = client_config
+        @client = client
+        @logger = logger
+        @gconfig = gconfig
+
         @logger.level = Logger::DEBUG
 
-        # Set up the DataCollector configuration
-        @client_config = DataCollector::Core.config
+        if @client_config.nil?
+          # Set up the DataCollector configuration
+          @client_config = DataCollector::Core.config
+          
+          @client_config.path  = '/app/config/'
+          @client_config.name  = 'config.yml'
         
-        @client_config.path  = '/app/config/'
-        @client_config.name  = 'config.yml'
+          commandline_arguments = parse_commandline_arguments()
+          if commandline_arguments[:config_file]
+            @client_config.path = File.dirname(commandline_arguments[:config_file])
+            @client_config.name = File.basename(commandline_arguments[:config_file])
+          end     
+        end
 
         if @client_config[:gconfig_application_credentials_file].nil?
           raise "Please set the path of your Google Cloud service account credentials JSON file. example: /app/config/application_default_credentials.json"
         end
-
-        @client_config[:max_video_duration] = @client_config[:max_video_duration] || 60 * 10 # 10 min.
         ENV['GOOGLE_APPLICATION_CREDENTIALS'] = @client_config[:gconfig_application_credentials_file]
 
-        @client_config[:gconfig_file] = File.join( @client_config[:gconfig_path], GCLOUD_SERIVCE_CONFIG_FILE )
         if @client_config[:gconfig_file].nil?
-           @logger.error ("Unable to find #{ @client_config[:gconfig_file]}")
-          raise "Please set the gconfig_path of the service config. example: /app/config/"
+          @client_config[:gconfig_file] = File.join( @client_config[:gconfig_path], GCLOUD_SERIVCE_CONFIG_FILE )
+          if @client_config[:gconfig_file].nil?
+            @logger.error ("Unable to find #{ @client_config[:gconfig_file]}")
+            raise "Please set the gconfig_path of the service config. example: /app/config/"
+          end
         end
 
         @client = Google::Cloud::VideoIntelligence::V1::VideoIntelligenceService::Client.new
         @gconfig = JSON.parse(  File.read(@client_config[:gconfig_file]) , symbolize_names: true)
 
-
         if @client_config[:use_google_storage]
-          @gStorageClient = GCloud::Storage::Client.new
+      
+          @gStorageClient = GCloud::Storage::Client.new(client_config: @client_config, client: @client, logger:@logger, gconfig: @gconfig)
           @gStorageClient.logger = Logger.new(STDOUT)
 
           @gStorageClient.logger.info "Starting Google Storage Client"
@@ -60,6 +72,7 @@ module GCloud
 
         unless @client_config[:input_file].nil?
           video = FFMPEG::Movie.new(@client_config[:input_file] )
+          output_file = @client_config[:output_file]
 
           if video.duration > @client_config[:max_video_duration] 
             raise ToLargeFileError, "#{@client_config[:input_file]} sikpped! It #{@client_config[:input_file]} exceeds the maximum allowed duration of #{@client_config[:max_video_duration] } seconds."
@@ -67,15 +80,15 @@ module GCloud
 
           if  @client_config[:use_google_storage] && video.duration > 30 # don't use Storage if duration is less than 30 sec
 
+            google_cloud_output_file =  File.join( "transcripts/video/", File.basename( output_file )  )
+            google_cloud_input_file =  File.join( "video-files", File.basename(@client_config[:input_file])  )
+
             @gconfig[:output_uri] = "gs://#{ @client_config[:gconfig_storage_bucket] }/#{google_cloud_output_file}"
-            @gconfig[:input_uri] = "gs://#{ @client_config[:gconfig_storage_bucket] }/#{google_cloud_input_file}" 
-
-            google_cloud_output_file =  File.join( "transcripts/video/", File.basename(@client_config[:output_file])  )
-            output_file = File.join( @client_config[:output_dir], @client_config[:output_file]) 
-
+            
+            @logger.info "Check output file with annotations already exists in Google Storage: #{@gconfig[:output_uri]}"  
 
             if @gStorageClient.file_exists?(file: google_cloud_output_file)
-              @logger.info "Output file with annotations already exists in Google Storage: #{@gconfig[:output_uri]}"
+              @logger.warn "Output file with annotations already exists in Google Storage: #{@gconfig[:output_uri]}"
               @gStorageClient.download_from_google_storage(  source: google_cloud_output_file,  target: output_file)
             
               @gStorageClient.remove_from_google_storage(file: google_cloud_output_file) 
@@ -84,8 +97,8 @@ module GCloud
               return JSON.parse( File.read(output_file) , symbolize_names: true)
             end
 
-            
             google_cloud_input_file =  File.join( "video-files", File.basename(@client_config[:input_file])  )
+            @gconfig[:input_uri] = "gs://#{ @client_config[:gconfig_storage_bucket] }/#{google_cloud_input_file}" 
             @logger.info "Upload to Google cloud Storage #{google_cloud_input_file}"
             @gStorageClient.upload_to_google_storage( source: @client_config[:input_file], target: google_cloud_input_file)
 
@@ -107,11 +120,10 @@ module GCloud
               raise e
             end
 
-            @logger.info "Download annotations to #{google_cloud_output_file}"
+            @logger.info "Download annotations from #{google_cloud_output_file} to output_file"
             @gStorageClient.download_from_google_storage(  source: google_cloud_output_file,  target: output_file)
             
             @gStorageClient.remove_from_google_storage(file: google_cloud_output_file) 
-
             @gStorageClient.remove_from_google_storage(file: google_cloud_input_file)
 
             return JSON.parse( File.read(output_file) , symbolize_names: true)
@@ -151,6 +163,7 @@ module GCloud
 
       def select_files
         # Select files from the records directory
+
         @logger.debug "Selecting files from input directories: #{@client_config[:input_dirs]}"
         raise "Input directories are not set in the client configuration." if @client_config[:input_dirs].nil? || @client_config[:input_dirs].empty?
         input_files = []

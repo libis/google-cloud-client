@@ -133,9 +133,16 @@ module GCloud
         if record.status.success?
           @logger.debug "Record retrieved successfully from Elasticsearch for ID: #{recordid}"
           record = JSON.parse(record.body.to_s)
-          return record
+          if record.is_a?(Hash) && record.keys.include?("error")
+            @logger.warn "Error retrieving record for ID: #{recordid}. Error: #{record['error']}"
+            return nil
+          end
+          if record_metadata.is_a?(Hash) && record_metadata.keys.include?("_source")
+            return record["_source"]
+          end
         end
         @logger.error "Failed to retrieve record from Elasticsearch for ID: #{recordid}. Response: #{record.status}"
+        return nil
       else
         raise "Elasticsearch is not healthy"
       end
@@ -164,6 +171,11 @@ module GCloud
     end
   end
 
+  def file_get_record(recordid, params: {})
+    record = JSON.parse(File.read(params[:input_file]), symbolize_names: true)
+    return record
+  end
+    
   def check_elasticsearch_health
           
     health = send_elastic_request( @es_url + "/_cluster/health") 
@@ -247,16 +259,15 @@ module GCloud
   end
 
   def get_metadata_from_record(input_file)
-    @logger.info "Search related metadata file for ID: #{recordid}"
-    language_code = ""
     recordid = get_record_id(input_file)
-    
-
+    @logger.info "Search related metadata file for ID: #{recordid}"
     @logger.debug "Extracting metadata fom record with ID: #{recordid}"
-    # Get the record from the elasticsearch index with the process that is defined in the client config
 
+    # Get the record from the elasticsearch index with the process that is defined in the client config
+    params = @client_config[:get_record_metadata][:params]
+    params[:input_file] = input_file
     begin
-      record_metadata = method( @client_config[:get_record_metadata][:process] ).call(recordid, params: @client_config[:get_record_metadata][:params])
+      record_metadata = method( @client_config[:get_record_metadata][:process] ).call(recordid, params: params )
     rescue RuntimeError => e
       puts "An error occurred: #{e.message}"
       puts "Backtrace:\n#{e.backtrace.join("\n")}"
@@ -267,29 +278,8 @@ module GCloud
       return nil
     end
 
-    if record_metadata.nil?
-      @logger.warn "Record not found with #{@client_config[:get_record_metadata][:process]} for ID: #{recordid}."
-    else
-      if record_metadata.is_a?(Hash) && record_metadata.keys.include?("error")
-        @logger.warn "Error retrieving record for ID: #{recordid}. Error: #{record_metadata['error']}"
-        return nil
-      end
-      if record_metadata.is_a?(Hash) && record_metadata.keys.include?("_source")
-        if record_metadata["_source"].keys.include?("inLanguage")
-          language_code = record_metadata["_source"]["inLanguage"]["@id"]
-          unless language_code.nil? || language_code == "und"
-             language_code = language_code_to_bcp47(language_code) || ""
-          end
-          if language_code.nil? || language_code == "und"
-            unless record_metadata["_source"]["comment"].nil?
-              record_metadata["_source"]["comment"] = [ record_metadata["_source"]["comment"] ] unless record_metadata["_source"]["comment"].is_a?(Array)
-              language_code_list = record_metadata["_source"]["comment"].map{ |l| l["inLanguage"]["@id"] }
-              language_code = language_code_list.group_by { |e| e }.max_by { |_, v| v.size }&.first
-              language_code = language_code_to_bcp47(language_code) || ""
-            end
-          end
-        end
-      end
+    if record_metadata.keys.include?("inLanguage")
+      language_code = get_language_code_from_metadata(metadata: record_metadata)
     end
     
     {
@@ -298,6 +288,23 @@ module GCloud
       language_code: language_code
     }
 
+  end
+
+  def get_language_code_from_metadata(metadata: nil)
+    language_code = ""
+    language_code = metadata["inLanguage"]["@id"]
+    unless language_code.nil? || language_code == "und"
+        language_code = language_code_to_bcp47(language_code) || ""
+    end
+    if language_code.nil? || language_code == "und"
+      unless metadata["comment"].nil?
+        metadata["comment"] = [ metadata["comment"] ] unless metadata["comment"].is_a?(Array)
+        language_code_list = metadata["comment"].map{ |l| l["inLanguage"]["@id"] }
+        language_code = language_code_list.group_by { |e| e }.max_by { |_, v| v.size }&.first
+        language_code = language_code_to_bcp47(language_code) || ""
+      end
+    end
+    return language_code
   end
 
   def get_related_media_file(input_file)
