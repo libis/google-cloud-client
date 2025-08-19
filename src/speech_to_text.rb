@@ -11,7 +11,7 @@ begin
 #  language_code = "en-US"
 #  TRANSCRIPTION_MODEL = "default" # "latest_long" or "latest_short"
 
-  start_parsing = DateTime.now.to_time
+  start_parsing = Time.now
   
   gClient = GCloud::SpeechToText::Client.new
   gClient.logger = Logger.new(STDOUT)

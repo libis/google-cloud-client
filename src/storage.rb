@@ -5,7 +5,7 @@ require_relative './lib/storage'
 
 begin
 
-  start_parsing = DateTime.now.to_time
+  start_parsing = Time.now
   
   gStorageClient = GCloud::Storage::Client.new
   gStorageClient.logger = Logger.new(STDOUT)
