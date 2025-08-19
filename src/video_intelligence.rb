@@ -46,7 +46,7 @@ begin
           input_hash = JSON.parse(File.read(input_file))                     
           # "$..data.items[?(@.id == '#{recordid}')].category.snippet.title"
           # "$..data.items[?(@.id == '#{recordid}')]"
-          metadata = {record: input_hash; recordid: recordid}  
+          metadata = {record: input_hash, recordid: recordid}  
           gClient.client_config[:metadata_from_input].each do |tag, jpath|
             tag = tag.to_s.gsub('_jpath', '').to_sym
             jpath = jpath.gsub('{{recordid}}', recordid)
