@@ -91,6 +91,8 @@ module GCloud
 
       def download_from_google_storage(source:, target:)
         file = @bucket.file(source)
+        output_dir = File.dirname( target ) 
+        FileUtils.mkdir_p(output_dir) unless File.directory?( output_dir )
         if file&.exists?
           file.download target, verify: :none
         else
