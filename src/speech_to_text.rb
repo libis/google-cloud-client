@@ -60,7 +60,7 @@ begin
     end
 
     gClient.logger.info "Media file (audio): #{audio_file}"
-    gClient.logger.info "metadata_file: #{input_file}"
+    gClient.logger.info "metadata_file ?: #{input_file}"
 
     if File.extname(audio_file) == ".mp4"
       audio_file = "#{File.dirname(audio_file)}/#{File.basename(audio_file,'.*')}.flac"
@@ -74,6 +74,8 @@ begin
     end
     
     gClient.gconfig[:audio][:uri] = audio_file
+
+    gClient.client_config[:input_file] = audio_file
 
     audio_file_metadata = Exiftool.new(audio_file)
    
@@ -95,7 +97,6 @@ begin
     metadata[:google_ai_service] = google_ai_service.downcase.gsub(' ', '_')
     metadata[:language_code] = gClient.gconfig[:config][:language_code]
 
-
     unless gClient.client_config[:output_file_template].nil? || gClient.client_config[:output_file_template].empty?
       output_file = gClient.client_config[:output_file_template]
       output_file= Mustache.render(gClient.client_config[:output_file_template], metadata)
@@ -104,11 +105,13 @@ begin
       output_file = File.join( gClient.client_config[:output_dir], "#{ File.basename(input_file , File.extname(input_file) ) }_speech_to_text_#{ gClient.gconfig[:config][:language_code].gsub('-','_')}.json") 
     end
     
-
     if File.file?(output_file) 
       gClient.logger.info "#{output_file} exists. Skipping #{google_ai_service} request for input_file: #{input_file}"
       next
     end
+
+    gClient.client_config[:output_file] = output_file
+
 
     response = gClient.response
 

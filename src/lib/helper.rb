@@ -94,6 +94,9 @@ module GCloud
   def search_file_in_dir(recordid, params: {})
     dirs = params[:dirs] || []
     found_file = nil
+    unless params[:pattern].nil? || params[:pattern].empty?
+       recordid = Mustache.render(params[:pattern], {recordid: recordid})
+    end
 
     dirs.each do |dir|
       Find.find(dir) do |file|
@@ -107,6 +110,17 @@ module GCloud
     end
     found_file
   end
+
+  def metadata_from_file(recordid, params: {})
+    metadata_file = search_file_in_dir(recordid, params: params)
+    @logger.debug "metadata_file : #{metadata_file}"
+    unless metadata_file.nil?
+      params[:input_file] = metadata_file
+      metadata = file_get_record(recordid, params: params)
+      return metadata
+    end
+  end
+  
 
   def elasticsearch_get_record(recordid, params: {})
     # This method should be implemented to retrieve a record from Elasticsearch

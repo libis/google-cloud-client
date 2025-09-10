@@ -64,18 +64,81 @@ module GCloud
 
       end
 
-
-
-
       def response
 
         if @gconfig[:audio][:uri].nil? && @gconfig[:audio][:content].nil?
           raise "No audio provided to process"
         end
 
+        output_file = @client_config[:output_file]
+
         unless @gconfig[:audio][:uri].nil?
           google_cloud_file =  File.join( "audio-files", File.basename(@gconfig[:audio][:uri])  )
+          # if  @client_config[:use_google_storage] && video.duration > 30 # don't use Storage if duration is less than 30 sec
+          if  @client_config[:use_google_storage]
           
+            google_cloud_output_file =  File.join( "transcripts/audio/", File.basename( output_file )  )
+            google_cloud_input_file =  File.join( "audio-files", File.basename(@client_config[:input_file])  )
+
+            @gconfig[:output_uri] = "gs://#{ @client_config[:gconfig_storage_bucket] }/#{google_cloud_output_file}"
+            
+            @logger.info "Check output file with annotations already exists in Google Storage: #{@gconfig[:output_uri]}"  
+
+            if @gStorageClient.file_exists?(file: google_cloud_output_file)
+              @logger.warn "Output file with annotations already exists in Google Storage: #{@gconfig[:output_uri]}"
+              @gStorageClient.download_from_google_storage(  source: google_cloud_output_file,  target: output_file)
+ 
+              @gStorageClient.remove_from_google_storage(file: google_cloud_output_file) 
+              @gStorageClient.remove_from_google_storage(file: google_cloud_input_file)
+              
+              return JSON.parse( File.read(output_file) , symbolize_names: true)
+            end
+
+            google_cloud_input_file =  File.join( "audio-files", File.basename(@client_config[:input_file])  )
+            @gconfig[:input_uri] = "gs://#{ @client_config[:gconfig_storage_bucket] }/#{google_cloud_input_file}" 
+            @logger.info "Upload to Google cloud Storage #{google_cloud_input_file}"
+
+            @gStorageClient.upload_to_google_storage( source: @client_config[:input_file], target: google_cloud_input_file)
+
+            @gconfig[:audio] = {uri: @gconfig[:input_uri]}
+            @gconfig[:output_config] = {gcs_uri: @gconfig[:output_uri]}
+            
+            @gconfig.delete(:input_uri)
+            @gconfig.delete(:output_uri)
+            
+            begin 
+
+              operation = @client.long_running_recognize(::Google::Cloud::Speech::V1::LongRunningRecognizeRequest.new ( @gconfig ) )
+
+              puts "Operation started"
+
+              operation.wait_until_done!
+              raise operation if operation.error?
+              pp "Operation finished! Output available in #{@gconfig[:output_config]}"
+
+            rescue Google::Cloud::ResourceExhaustedError => e  
+              @logger.error "Resource Exhausted: #{e.message}"
+            rescue StandardError => e
+              @gStorageClient.download_from_google_storage(  source: google_cloud_output_file,  target: output_file)
+              raise e
+            end
+
+            @logger.info "Download annotations from #{google_cloud_output_file} to output_file"
+            @logger.info "Download output_file #{output_file} "
+            @gStorageClient.download_from_google_storage(  source: google_cloud_output_file,  target: output_file)
+
+            @gStorageClient.remove_from_google_storage(file: google_cloud_output_file) 
+            @gStorageClient.remove_from_google_storage(file: google_cloud_input_file)
+
+            return JSON.parse( File.read(output_file) , symbolize_names: true)
+          
+          end
+          
+          
+
+
+          
+=begin          
           @gStorageClient.upload_to_google_storage(source: @gconfig[:audio][:uri], target: google_cloud_file)
           @gconfig[:audio] = { "uri": "gs://#{ @client_config[:gconfig_storage_bucket] }/#{google_cloud_file}" }
 
@@ -91,7 +154,7 @@ module GCloud
           @gStorageClient.remove_from_google_storage(file: google_cloud_file)
 
           return JSON.parse( operation.response.to_json , symbolize_names: true)
-          
+=end          
         end
       end
 
