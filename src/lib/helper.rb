@@ -114,7 +114,9 @@ module GCloud
   def metadata_from_file(recordid, params: {})
     metadata_file = search_file_in_dir(recordid, params: params)
     @logger.debug "metadata_file : #{metadata_file}"
-    unless metadata_file.nil?
+    if metadata_file.nil?
+      raise "No metadata_file found #{metadata_file}"
+    else
       params[:input_file] = metadata_file
       metadata = file_get_record(recordid, params: params)
       return metadata
@@ -276,19 +278,19 @@ module GCloud
     recordid = get_record_id(input_file)
     @logger.info "Search related metadata file for ID: #{recordid}"
     @logger.debug "Extracting metadata fom record with ID: #{recordid}"
-
     # Get the record from the elasticsearch index with the process that is defined in the client config
     params = @client_config[:get_record_metadata][:params]
     params[:input_file] = input_file
     begin
       record_metadata = method( @client_config[:get_record_metadata][:process] ).call(recordid, params: params )
     rescue RuntimeError => e
-      puts "An error occurred: #{e.message}"
-      puts "Backtrace:\n#{e.backtrace.join("\n")}"
+      @logger.error "An error occurred: #{e.message}"
+      @logger.error "Backtrace:\n#{e.backtrace.join("\n")}"
+      return nil
       exit 1
     rescue StandardError => e
-      puts "An error occurred: #{e.message}"
-      puts "Backtrace:\n#{e.backtrace.join("\n")}"
+      @logger.error "An error occurred: #{e.message}"
+      @logger.error "Backtrace:\n#{e.backtrace.join("\n")}"
       return nil
     end
 

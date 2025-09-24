@@ -37,7 +37,7 @@ begin
     end
 
     if File.extname(input_file) == ".json"
-      input_hash = JSON.parse(File.read(input_file)) 
+      input_hash = JSON.parse(File.read(input_file))
       audio_file = gClient.get_related_media_file(input_file)
       metadata = {}
       # "$..data.items[?(@.id == '#{recordid}')].category.snippet.title"
@@ -52,6 +52,11 @@ begin
       end
     else
       metadata = gClient.get_metadata_from_record(input_file)
+      if metadata.nil? || metadata.empty?
+        gClient.logger.error "No metadata found for input file: #{input_file}"
+        next
+        raise "No metadata found for input file: #{input_file}"
+      end
       audio_file = input_file
     end
 
